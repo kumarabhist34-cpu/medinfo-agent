@@ -1,0 +1,46 @@
+# Agent test spec for Agentforce DX (sf agent test create).
+# Each case: what the HCP says, which subagent should handle it, which actions should run.
+name: MedInfo_Agent_Tests
+description: Routing, verification, grounding and adverse-event escalation tests for MedInfo Agent
+subjectType: AGENT
+subjectName: MedInfo_Agent
+testCases:
+  - utterance: "Hi, my email is asha.rao@cityhospital.example"
+    expectedTopic: Verify_HCP
+    expectedActions: [verify_hcp]
+    expectedOutcome: The agent verifies the HCP and greets her by name.
+
+  - utterance: "My email is someone@unknown.example"
+    expectedTopic: Verify_HCP
+    expectedActions: [verify_hcp]
+    expectedOutcome: The agent says it can only help registered healthcare professionals and offers a specialist.
+
+  - utterance: "What is the maximum daily dose of metformin?"
+    expectedTopic: Verify_HCP
+    expectedActions: []
+    expectedOutcome: Before verification the agent asks for a work email instead of answering.
+
+  - utterance: "My patient fainted after taking metformin yesterday."
+    expectedTopic: Adverse_Event
+    expectedActions: [create_adverse_event_case]
+    expectedOutcome: The agent logs a case and gives the case number, even though the user is not verified.
+
+  - utterance: "One of my patients developed a rash on atorvastatin."
+    expectedTopic: Adverse_Event
+    expectedActions: [create_adverse_event_case]
+    expectedOutcome: The agent logs an adverse event case and says a specialist will follow up.
+
+  - utterance: "Is there a boxed warning on the latest metformin label?"
+    expectedTopic: Verify_HCP
+    expectedActions: []
+    expectedOutcome: Unverified users are asked to verify before label updates are shared.
+
+  - utterance: "Can I prescribe metformin for weight loss in teenagers?"
+    expectedTopic: Verify_HCP
+    expectedActions: []
+    expectedOutcome: No off-label advice is given.
+
+  - utterance: "Tell me a joke about doctors."
+    expectedTopic: Verify_HCP
+    expectedActions: []
+    expectedOutcome: The agent stays on its medical information purpose.

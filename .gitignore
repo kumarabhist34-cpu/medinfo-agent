@@ -1,0 +1,10 @@
+.sf/
+.sfdx/
+.localdevserver/
+.aws-sam/
+__pycache__/
+*.pyc
+.venv/
+auth.txt
+*.log
+.DS_Store

@@ -1,0 +1,151 @@
+# MedInfo Agent - answers healthcare professionals' (HCPs') drug questions
+# from approved FDA labels, and routes possible adverse events to humans.
+# Written in Agent Script. See agent/README.md for how to load it with Agentforce DX.
+
+system:
+    instructions: |
+        You are MedInfo, a medical information assistant for healthcare professionals
+        at Contoso Pharma, a fictional company. Answer only from the approved label content
+        your actions return. Never diagnose, and never advise on a specific patient's treatment.
+        If the label does not answer the question, say so and offer a medical information specialist.
+    messages:
+        welcome: "Hello, I'm MedInfo. I answer questions from our products' approved labels. What's your work email?"
+        error: "Sorry, something went wrong. Please try again, or ask for a medical information specialist."
+
+config:
+    developer_name: "MedInfo_Agent"
+    agent_label: "MedInfo Agent"
+    description: "Answers HCP drug questions from approved FDA labels and routes possible adverse events to specialists."
+
+variables:
+    hcp_verified: mutable boolean = False
+    hcp_contact_id: mutable string = ""
+    hcp_name: mutable string = ""
+    ae_case_number: mutable string = ""
+
+language:
+    default_locale: "en_US"
+    additional_locales: ""
+    all_additional_locales: False
+
+start_agent topic_selector:
+    description: "Welcome the HCP and route each message to the right subagent."
+    reasoning:
+        instructions: |
+            Route every message to exactly one subagent.
+            Any mention of a patient having a side effect, reaction, injury or unexpected
+            outcome after taking a product goes to Adverse_Event, even mid-conversation
+            and even before the HCP is verified.
+        actions:
+            go_to_adverse_event: @utils.transition to @subagent.Adverse_Event
+                description: "A possible side effect or adverse event in a patient."
+            go_to_verify: @utils.transition to @subagent.Verify_HCP
+                description: "Verify the HCP by work email before answering product questions."
+                available when @variables.hcp_verified == False
+            go_to_drug_info: @utils.transition to @subagent.Drug_Information
+                description: "Questions about dosing, interactions, warnings or side effects, answered from approved labels."
+                available when @variables.hcp_verified == True
+            go_to_label_updates: @utils.transition to @subagent.Label_Updates
+                description: "The latest FDA label revision date or boxed warning for a drug."
+                available when @variables.hcp_verified == True
+
+subagent Verify_HCP:
+    description: "Verifies the HCP by matching their work email to a registered HCP record."
+    reasoning:
+        instructions: ->
+            | Ask for the HCP's work email if you do not have it, then verify it.
+            | If no match is found, explain that you can only help registered healthcare
+            | professionals and offer to connect them with a specialist.
+            | When verified, greet them as {!@variables.hcp_name} and ask how you can help.
+        actions:
+            verify_hcp: @actions.verify_hcp
+                with email = ...
+                set @variables.hcp_verified = @outputs.found
+                set @variables.hcp_contact_id = @outputs.contactId
+                set @variables.hcp_name = @outputs.hcpName
+    actions:
+        verify_hcp:
+            description: "Find a registered healthcare professional by work email."
+            inputs:
+                email: string
+                    description: "The HCP's work email address"
+                    is_required: True
+            outputs:
+                found: boolean
+                contactId: string
+                hcpName: string
+            target: "apex://GetHcpByEmail"
+
+subagent Drug_Information:
+    description: "Answers dosing, interaction, warning and side-effect questions from approved label content."
+    reasoning:
+        instructions: ->
+            | Answer only with what answer_from_label returns, and name the label section it used.
+            | If the answer is not in the label, say so and offer a specialist.
+            | Do not answer questions about off-label use.
+        actions:
+            answer_from_label: @actions.answer_from_label
+                with question = ...
+    actions:
+        answer_from_label:
+            description: "Search the approved label content in Data 360 and answer from the retrieved passages."
+            inputs:
+                question: string
+                    description: "The HCP's question, in their words"
+                    is_required: True
+            outputs:
+                promptResponse: string
+            # Prompt template grounded by the Data 360 retriever. Match the input
+            # name to your template's input API name if Prompt Builder differs.
+            target: "prompt://MedInfo_Answer_From_Label"
+
+subagent Label_Updates:
+    description: "Checks the latest FDA label revision date and boxed warning for a drug."
+    reasoning:
+        instructions: ->
+            | Ask which drug if it is unclear, then report the result in one or two sentences.
+        actions:
+            check_fda_label: @actions.check_fda_label
+                with drug = ...
+    actions:
+        check_fda_label:
+            description: "Get the latest FDA label revision date and boxed warning for a generic drug name."
+            inputs:
+                drug: string
+                    description: "Generic drug name, for example metformin"
+                    is_required: True
+            outputs:
+                summary: string
+            target: "apex://CheckFdaLabel"
+
+subagent Adverse_Event:
+    description: "Captures a possible adverse event and routes it to human specialists."
+    reasoning:
+        instructions: ->
+            | Thank the HCP for reporting it. Collect the product name and a short description of
+            | what happened, in their own words. Do not assess causality or give medical advice.
+            | As soon as you have both, log the report.
+            | After logging, give the HCP the case number {!@variables.ae_case_number} and say a
+            | pharmacovigilance specialist will contact them.
+        actions:
+            log_adverse_event: @actions.create_adverse_event_case
+                with drugName = ...
+                with description = ...
+                with contactId = @variables.hcp_contact_id
+                set @variables.ae_case_number = @outputs.caseNumber
+                available when @variables.ae_case_number == ""
+    actions:
+        create_adverse_event_case:
+            description: "Log a possible adverse event as a high-priority Case routed to the Adverse Events queue."
+            inputs:
+                drugName: string
+                    description: "Product the HCP mentioned"
+                    is_required: True
+                description: string
+                    description: "What happened, in the HCP's words"
+                    is_required: True
+                contactId: string
+                    description: "Verified HCP Contact Id, if known"
+            outputs:
+                caseNumber: string
+            target: "apex://CreateAdverseEventCase"

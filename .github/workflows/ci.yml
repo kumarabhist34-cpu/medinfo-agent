@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lambda-tests:
+    name: Lambda unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run tests
+        run: python -m unittest discover -s lambda/tests -v
+
+  salesforce:
+    name: Deploy, Apex tests and agent tests
+    runs-on: ubuntu-latest
+    env:
+      SFDX_AUTH_URL: ${{ secrets.SFDX_AUTH_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Skip when no org is connected
+        if: env.SFDX_AUTH_URL == ''
+        run: echo "Add an SFDX_AUTH_URL repository secret to deploy and run Apex and agent tests."
+
+      - name: Install Salesforce CLI
+        if: env.SFDX_AUTH_URL != ''
+        run: npm install --global @salesforce/cli
+
+      - name: Authenticate to the org
+        if: env.SFDX_AUTH_URL != ''
+        run: |
+          echo "$SFDX_AUTH_URL" > ./auth.txt
+          sf org login sfdx-url --sfdx-url-file ./auth.txt --alias ci --set-default
+          rm ./auth.txt
+
+      - name: Deploy and run Apex tests
+        if: env.SFDX_AUTH_URL != ''
+        run: sf project deploy start --source-dir force-app --test-level RunLocalTests --wait 30
+
+      - name: Run agent tests
+        if: env.SFDX_AUTH_URL != ''
+        run: sf agent test run --api-name MedInfo_Agent_Tests --wait 15 --result-format human

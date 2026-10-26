@@ -1,0 +1,31 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: MedInfo Agent - FDA label lookup (AWS Lambda behind an API Gateway HTTP API)
+
+Resources:
+  FdaLabelFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: app.lambda_handler
+      Runtime: python3.12
+      Architectures: [arm64]
+      CodeUri: fda_label/
+      MemorySize: 128
+      Timeout: 10
+      Events:
+        LabelApi:
+          Type: HttpApi
+          Properties:
+            Path: /label
+            Method: GET
+
+  FdaLabelLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${FdaLabelFunction}
+      RetentionInDays: 7
+
+Outputs:
+  ApiBaseUrl:
+    Description: Use this as the URL of the FDA_Lambda Named Credential in Salesforce
+    Value: !Sub https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com
